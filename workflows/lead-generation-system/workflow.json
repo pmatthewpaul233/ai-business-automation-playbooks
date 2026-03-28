@@ -1,0 +1,138 @@
+{
+  "name": "Lead Generation Automation System",
+  "description": "Captures leads, pushes to CRM, sends WhatsApp follow-up, qualifies via AI",
+  "version": "1.0.0",
+  "tool": "n8n",
+  "nodes": [
+    {
+      "id": "webhook-trigger",
+      "type": "n8n-nodes-base.webhook",
+      "name": "Lead Form Webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-capture",
+        "responseMode": "onReceived"
+      },
+      "position": [100, 300]
+    },
+    {
+      "id": "set-lead-data",
+      "type": "n8n-nodes-base.set",
+      "name": "Format Lead Data",
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "name", "value": "={{$json.body.name}}" },
+            { "name": "email", "value": "={{$json.body.email}}" },
+            { "name": "phone", "value": "={{$json.body.phone}}" },
+            { "name": "source", "value": "={{$json.body.source}}" },
+            { "name": "timestamp", "value": "={{new Date().toISOString()}}" }
+          ]
+        }
+      },
+      "position": [300, 300]
+    },
+    {
+      "id": "crm-entry",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Create CRM Contact",
+      "parameters": {
+        "method": "POST",
+        "url": "https://rest.gohighlevel.com/v1/contacts/",
+        "authentication": "headerAuth",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer YOUR_GHL_API_KEY" }
+          ]
+        },
+        "bodyParametersJson": "={\"firstName\": \"{{$json.name}}\", \"email\": \"{{$json.email}}\", \"phone\": \"{{$json.phone}}\", \"source\": \"{{$json.source}}\"}"
+      },
+      "position": [500, 200]
+    },
+    {
+      "id": "whatsapp-day0",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Send WhatsApp Day 0",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/YOUR_ACCOUNT_SID/Messages.json",
+        "authentication": "basicAuth",
+        "bodyParametersJson": "={\"From\": \"whatsapp:+YOUR_TWILIO_NUMBER\", \"To\": \"whatsapp:{{$json.phone}}\", \"Body\": \"Hey {{$json.name}}! Thanks for reaching out. I'll get back to you shortly with everything you need. Reply YES to confirm you received this.\"}"
+      },
+      "position": [500, 400]
+    },
+    {
+      "id": "ai-qualify",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "AI Lead Qualification",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "YOUR_CLAUDE_API_KEY" },
+            { "name": "anthropic-version", "value": "2023-06-01" }
+          ]
+        },
+        "bodyParametersJson": "={\"model\": \"claude-haiku-4-5-20251001\", \"max_tokens\": 100, \"messages\": [{\"role\": \"user\", \"content\": \"Based on this lead info, rate qualification 1-10 and respond with JSON only: {score, reason}. Lead: {{JSON.stringify($json)}}\"}]}"
+      },
+      "position": [700, 300]
+    },
+    {
+      "id": "route-qualified",
+      "type": "n8n-nodes-base.if",
+      "name": "Route by Score",
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{JSON.parse($json.content[0].text).score}}",
+              "operation": "largerEqual",
+              "value2": 7
+            }
+          ]
+        }
+      },
+      "position": [900, 300]
+    },
+    {
+      "id": "notify-sales",
+      "type": "n8n-nodes-base.slack",
+      "name": "Notify Sales Team",
+      "parameters": {
+        "channel": "#hot-leads",
+        "text": "🔥 Hot lead! {{$json.name}} ({{$json.email}}) scored {{$json.score}}/10. Follow up NOW."
+      },
+      "position": [1100, 200]
+    },
+    {
+      "id": "nurture-sequence",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Add to Nurture Sequence",
+      "parameters": {
+        "method": "POST",
+        "url": "https://rest.gohighlevel.com/v1/contacts/{{$json.crm_id}}/tags/",
+        "bodyParametersJson": "{\"tags\": [\"nurture-sequence\"]}"
+      },
+      "position": [1100, 400]
+    }
+  ],
+  "connections": {
+    "Lead Form Webhook": { "main": [[{ "node": "Format Lead Data", "type": "main", "index": 0 }]] },
+    "Format Lead Data": {
+      "main": [[
+        { "node": "Create CRM Contact", "type": "main", "index": 0 },
+        { "node": "Send WhatsApp Day 0", "type": "main", "index": 0 }
+      ]]
+    },
+    "Send WhatsApp Day 0": { "main": [[{ "node": "AI Lead Qualification", "type": "main", "index": 0 }]] },
+    "AI Lead Qualification": { "main": [[{ "node": "Route by Score", "type": "main", "index": 0 }]] },
+    "Route by Score": {
+      "main": [
+        [{ "node": "Notify Sales Team", "type": "main", "index": 0 }],
+        [{ "node": "Add to Nurture Sequence", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "notes": "Replace all YOUR_* placeholders with your actual API keys before activating. See setup-guide.md for full instructions."
+}
