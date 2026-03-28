@@ -1,0 +1,119 @@
+{
+  "name": "Content Engine Automation System",
+  "description": "Generates multi-platform content from a single brief using AI",
+  "version": "1.0.0",
+  "tool": "n8n",
+  "nodes": [
+    {
+      "id": "airtable-trigger",
+      "type": "n8n-nodes-base.airtableTrigger",
+      "name": "New Content Brief",
+      "parameters": {
+        "baseId": "YOUR_AIRTABLE_BASE_ID",
+        "tableId": "Content Briefs",
+        "triggerField": "Status",
+        "triggerValue": "Ready to Generate"
+      },
+      "position": [100, 300]
+    },
+    {
+      "id": "generate-hooks",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Generate 10 Hooks",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "YOUR_CLAUDE_API_KEY" },
+            { "name": "anthropic-version", "value": "2023-06-01" }
+          ]
+        },
+        "bodyParametersJson": "={\"model\": \"claude-sonnet-4-6\", \"max_tokens\": 1000, \"messages\": [{\"role\": \"user\", \"content\": \"Generate 10 scroll-stopping hooks for {{$json.target_audience}} struggling with {{$json.problem}}. Format as numbered list. Vary the styles: question, bold statement, story, statistic, controversial.\"}]}"
+      },
+      "position": [300, 200]
+    },
+    {
+      "id": "generate-script",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Generate Reel Script",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "YOUR_CLAUDE_API_KEY" },
+            { "name": "anthropic-version", "value": "2023-06-01" }
+          ]
+        },
+        "bodyParametersJson": "={\"model\": \"claude-sonnet-4-6\", \"max_tokens\": 500, \"messages\": [{\"role\": \"user\", \"content\": \"Write a 30-second Instagram Reel script using problem-agitate-solution for: Topic: {{$json.topic}}, Audience: {{$json.target_audience}}, CTA: {{$json.cta}}. Format: Hook (5s) | Problem (8s) | Agitate (7s) | Solution (8s) | CTA (2s)\"}]}"
+      },
+      "position": [300, 400]
+    },
+    {
+      "id": "generate-linkedin",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Generate LinkedIn Post",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "YOUR_CLAUDE_API_KEY" },
+            { "name": "anthropic-version", "value": "2023-06-01" }
+          ]
+        },
+        "bodyParametersJson": "={\"model\": \"claude-sonnet-4-6\", \"max_tokens\": 600, \"messages\": [{\"role\": \"user\", \"content\": \"Write a LinkedIn post about {{$json.topic}} for {{$json.target_audience}}. Use line breaks for readability. End with a question to drive comments. Tone: {{$json.tone}}. Max 1300 characters.\"}]}"
+      },
+      "position": [300, 600]
+    },
+    {
+      "id": "format-output",
+      "type": "n8n-nodes-base.set",
+      "name": "Format All Content",
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "hooks", "value": "={{$node['Generate 10 Hooks'].json.content[0].text}}" },
+            { "name": "reel_script", "value": "={{$node['Generate Reel Script'].json.content[0].text}}" },
+            { "name": "linkedin_post", "value": "={{$node['Generate LinkedIn Post'].json.content[0].text}}" },
+            { "name": "topic", "value": "={{$json.topic}}" },
+            { "name": "generated_at", "value": "={{new Date().toISOString()}}" }
+          ]
+        }
+      },
+      "position": [600, 400]
+    },
+    {
+      "id": "save-to-calendar",
+      "type": "n8n-nodes-base.airtable",
+      "name": "Save to Content Calendar",
+      "parameters": {
+        "operation": "create",
+        "baseId": "YOUR_AIRTABLE_BASE_ID",
+        "tableId": "Content Calendar",
+        "fields": {
+          "Topic": "={{$json.topic}}",
+          "Hooks": "={{$json.hooks}}",
+          "Reel Script": "={{$json.reel_script}}",
+          "LinkedIn Post": "={{$json.linkedin_post}}",
+          "Status": "Draft",
+          "Generated At": "={{$json.generated_at}}"
+        }
+      },
+      "position": [800, 400]
+    }
+  ],
+  "connections": {
+    "New Content Brief": {
+      "main": [[
+        { "node": "Generate 10 Hooks", "type": "main", "index": 0 },
+        { "node": "Generate Reel Script", "type": "main", "index": 0 },
+        { "node": "Generate LinkedIn Post", "type": "main", "index": 0 }
+      ]]
+    },
+    "Generate LinkedIn Post": { "main": [[{ "node": "Format All Content", "type": "main", "index": 0 }]] },
+    "Format All Content": { "main": [[{ "node": "Save to Content Calendar", "type": "main", "index": 0 }]] }
+  },
+  "notes": "Requires Airtable base with 'Content Briefs' and 'Content Calendar' tables. See setup-guide.md for table schemas."
+}
