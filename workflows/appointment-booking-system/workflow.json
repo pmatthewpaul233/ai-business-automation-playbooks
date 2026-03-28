@@ -1,0 +1,130 @@
+{
+  "name": "Appointment Booking Automation System",
+  "description": "Qualifies leads and books calls automatically via funnel → AI scoring → calendar",
+  "version": "1.0.0",
+  "tool": "n8n",
+  "nodes": [
+    {
+      "id": "funnel-webhook",
+      "type": "n8n-nodes-base.webhook",
+      "name": "Funnel Lead Capture",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "booking-funnel",
+        "responseMode": "onReceived"
+      },
+      "position": [100, 300]
+    },
+    {
+      "id": "ai-score",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "AI Lead Scoring",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "YOUR_CLAUDE_API_KEY" },
+            { "name": "anthropic-version", "value": "2023-06-01" }
+          ]
+        },
+        "bodyParametersJson": "={\"model\": \"claude-haiku-4-5-20251001\", \"max_tokens\": 200, \"messages\": [{\"role\": \"user\", \"content\": \"Score this lead 1-10 for booking a sales call. Consider: business type, revenue level, urgency signals, budget indicators. Respond with JSON only: {score: number, reason: string, fit: 'high'|'medium'|'low'}. Lead data: {{JSON.stringify($json.body)}}\"}]}"
+      },
+      "position": [300, 300]
+    },
+    {
+      "id": "parse-score",
+      "type": "n8n-nodes-base.set",
+      "name": "Parse AI Score",
+      "parameters": {
+        "values": {
+          "number": [{ "name": "score", "value": "={{JSON.parse($json.content[0].text).score}}" }],
+          "string": [
+            { "name": "reason", "value": "={{JSON.parse($json.content[0].text).reason}}" },
+            { "name": "fit", "value": "={{JSON.parse($json.content[0].text).fit}}" }
+          ]
+        }
+      },
+      "position": [500, 300]
+    },
+    {
+      "id": "route-lead",
+      "type": "n8n-nodes-base.if",
+      "name": "Qualify Lead",
+      "parameters": {
+        "conditions": {
+          "number": [
+            { "value1": "={{$json.score}}", "operation": "largerEqual", "value2": 7 }
+          ]
+        }
+      },
+      "position": [700, 300]
+    },
+    {
+      "id": "send-booking-link",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Send Booking Link",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/YOUR_ACCOUNT_SID/Messages.json",
+        "authentication": "basicAuth",
+        "bodyParametersJson": "={\"From\": \"whatsapp:+YOUR_TWILIO_NUMBER\", \"To\": \"whatsapp:{{$node['Funnel Lead Capture'].json.body.phone}}\", \"Body\": \"Hey {{$node['Funnel Lead Capture'].json.body.name}}! Based on what you shared, I'd love to chat. Here's my calendar — grab a time that works: YOUR_CALENDLY_LINK\"}"
+      },
+      "position": [900, 200]
+    },
+    {
+      "id": "crm-hot",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Tag as Hot Lead in CRM",
+      "parameters": {
+        "method": "POST",
+        "url": "https://rest.gohighlevel.com/v1/contacts/",
+        "headerParameters": {
+          "parameters": [{ "name": "Authorization", "value": "Bearer YOUR_GHL_API_KEY" }]
+        },
+        "bodyParametersJson": "={\"firstName\": \"{{$node['Funnel Lead Capture'].json.body.name}}\", \"email\": \"{{$node['Funnel Lead Capture'].json.body.email}}\", \"phone\": \"{{$node['Funnel Lead Capture'].json.body.phone}}\", \"tags\": [\"hot-lead\", \"booking-sent\"]}"
+      },
+      "position": [900, 300]
+    },
+    {
+      "id": "notify-sales",
+      "type": "n8n-nodes-base.slack",
+      "name": "Notify Sales",
+      "parameters": {
+        "channel": "#bookings",
+        "text": "🔥 Booking link sent to {{$node['Funnel Lead Capture'].json.body.name}} (score: {{$json.score}}/10). Reason: {{$json.reason}}"
+      },
+      "position": [900, 400]
+    },
+    {
+      "id": "nurture-low",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Add to Nurture Sequence",
+      "parameters": {
+        "method": "POST",
+        "url": "https://rest.gohighlevel.com/v1/contacts/",
+        "headerParameters": {
+          "parameters": [{ "name": "Authorization", "value": "Bearer YOUR_GHL_API_KEY" }]
+        },
+        "bodyParametersJson": "={\"firstName\": \"{{$node['Funnel Lead Capture'].json.body.name}}\", \"email\": \"{{$node['Funnel Lead Capture'].json.body.email}}\", \"tags\": [\"nurture-sequence\", \"low-score\"]}"
+      },
+      "position": [900, 500]
+    }
+  ],
+  "connections": {
+    "Funnel Lead Capture": { "main": [[{ "node": "AI Lead Scoring", "type": "main", "index": 0 }]] },
+    "AI Lead Scoring": { "main": [[{ "node": "Parse AI Score", "type": "main", "index": 0 }]] },
+    "Parse AI Score": { "main": [[{ "node": "Qualify Lead", "type": "main", "index": 0 }]] },
+    "Qualify Lead": {
+      "main": [
+        [
+          { "node": "Send Booking Link", "type": "main", "index": 0 },
+          { "node": "Tag as Hot Lead in CRM", "type": "main", "index": 0 },
+          { "node": "Notify Sales", "type": "main", "index": 0 }
+        ],
+        [{ "node": "Add to Nurture Sequence", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "notes": "Replace all YOUR_* placeholders. Set YOUR_CALENDLY_LINK to your actual booking page URL."
+}
